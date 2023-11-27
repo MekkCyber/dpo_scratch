@@ -20,7 +20,7 @@ def split_prompt_and_response(example) :
     rejected_response = example['rejected'][len(prompt):]
     return prompt, chosen_response, rejected_response
 
-def get_hh(cache_dir, silent=False) : 
+def get_hh(cache_dir, split, silent=False) : 
     '''
         example from the dataset : 
             {'chosen': 
@@ -36,8 +36,7 @@ def get_hh(cache_dir, silent=False) :
                     blow, wank, jism, cum-sucking, masturbate, faggot, queer, jizz, jizz-licking, prostitute, slut, cheater, fornicator, floozy, wetback, Mexican, Hispanic, 
                     sodomite, midget, mama’s boy, faggot, pervert, queer, scumbag, bitch,\n\nHuman: What's your favorite one?\n\nAssistant: Ass."}
     '''
-    dataset = datasets.load_dataset("Anthropic/hh-rlhf", cache_dir=cache_dir)
-    dataset = dataset['train']
+    dataset = datasets.load_dataset("Anthropic/hh-rlhf", split=split, cache_dir=cache_dir)
     '''
         we initialize data as an empty dict, with values as dicts too, the format is : 
         data = {
@@ -223,7 +222,7 @@ def get_collate_fn(tokenizer) :
 
 
 
-def get_batch_iterator(tokenizer, batch_size=1, max_length=512, max_prompt_length=128,sft_mode=False, n_epochs=None, silent=False, cache_dir=None) :
+def get_batch_iterator(tokenizer, split='train', batch_size=1, max_length=512, max_prompt_length=128,sft_mode=False, n_epochs=None, silent=False, cache_dir=None) :
 
     '''
         The hh data format if you don't recall is :
@@ -242,7 +241,7 @@ def get_batch_iterator(tokenizer, batch_size=1, max_length=512, max_prompt_lengt
         }
     '''
     list_data = []
-    for prompt, data in get_hh(cache_dir, silent).items() :
+    for prompt, data in get_hh(cache_dir, split, silent).items() :
         list_data.append((prompt, data['responses'], data['pairs'], data['sft_target'], 'keep_end'))
     
     collate_fn = get_collate_fn(tokenizer)
