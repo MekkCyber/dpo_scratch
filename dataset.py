@@ -1,6 +1,8 @@
 import datasets
 from collections import defaultdict
 from tqdm import tqdm
+import torch
+from torch.nn.utils.rnn import pad_sequence
 
 def extract_prompt(prompt_and_response) : 
     '''
@@ -152,7 +154,7 @@ def tokenize_element(prompt, chosen, rejected, truncation_mode, tokenizer, max_l
 
 def get_collate_fn(tokenizer) : 
     '''
-        batch is a list of dictionnairies of the form : 
+        batch is a list of dictionnaries of the form : 
         {
             # strings
             'prompt': ...
@@ -174,4 +176,134 @@ def get_collate_fn(tokenizer) :
     def collate_fn(batch) :
         padded = {}
         for k in batch[0].keys() : 
+            # we only collate tokens
             if k.endswith('_input_ids') or k.endswith('_attention_mask') or k.endswith('_labels') :
+                # prompt tokens
+                if 'prompt' in k :
+                    # we pad the prompt from the start and not the end
+                    to_pad = [torch.LongTensor(ex[k][::-1]) for ex in batch]
+                else : 
+                    to_pad = [torch.LongTensor(ex[k]) for ex in batch]
+                if k.endswith('_input_ids') : 
+                    padding_value = tokenizer.pad_token_id
+                elif k.endswidth('_labels') :
+                    padding_value = -100
+                elif k.endswidth('_attention_mask') : 
+                    padding_value = 0
+                else : 
+                    raise ValueError(f"unexpected key in batch {k}")
+                
+                padded[k] = pad_sequence(to_pad, batch_first=True, padding_value=padding_value)
+                if 'prompt' in k:
+                    padded[k] = padded[k].flip(dim=[1])
+            else : 
+                padded[k] = [ex[k] for ex in batch]
+        '''
+            padded is a dict of the form : 
+            {
+            # list of strings
+            'prompt': [...]
+            'chosen': [...]
+            'rejected': [...]
+            'chosen_response_only': [...]
+            'rejected_response_only': [...]
+            # list of lists of tokens
+            'chosen_input_ids': [[...]]
+            'chosen_attention_mask: [[...]]
+            'chosen_labels': [[...]]
+            'rejected_input_ids': [[...]]
+            'rejected_attention_mask: [[...]]
+            'rejected_labels': [[...]]
+            'prompt_input_ids': [[...]]
+            'prompt_attention_mask: [[...]]
+        }
+        '''
+        return padded
+    return collate_fn
+
+
+
+def get_batch_iterator(tokenizer, batch_size=1, max_length=512, max_prompt_length=128,sft_mode=False, n_epochs=None, silent=False, cache_dir=None) :
+
+    '''
+        The hh data format if you don't recall is :
+        data = {
+            '<prompt1>' : {
+                'pairs' : [(0,1), (2,3),...]
+                'responses' : [chosen1, rejected1, chosen2, rejected2,...]
+                'sft_target' : last_chosen
+            }
+            '<prompt2>' : {
+                'pairs' : [(0,1), (2,3),...]
+                'responses' : [chosen1, rejected1, chosen2, rejected2,...]
+                'sft_target' : last_chosen
+            }
+            ...
+        }
+    '''
+    list_data = []
+    for prompt, data in get_hh(cache_dir, silent).items() :
+        list_data.append((prompt, data['responses'], data['pairs'], data['sft_target'], 'keep_end'))
+    
+    collate_fn = get_collate_fn(tokenizer)
+
+    epoch_idx = 0
+    while True : 
+        if epoch_idx >= n_epochs : 
+            if not silent : 
+                print(f'Finished the {n_epochs} epochs')
+            break
+        batch = []
+        for prompt, responses, pairs, sft_target, truncation_mode in list_data : 
+            if sft_mode : 
+                # we pass sft_target even for rejected because we are going to delete it after anyway
+                element = tokenize_element(prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length)
+                element = {k: v for k, v in element.items() if 'rejected' not in k}
+                '''
+                    element will have the form : 
+                    {
+                        # strings
+                        'prompt': ...
+                        'chosen': ...
+                        'chosen_response_only': ...
+                        # tokens
+                        'chosen_input_ids': [...]
+                        'chosen_attention_mask: [...]
+                        'chosen_labels': [...]
+                        'prompt_input_ids': [...]
+                        'prompt_attention_mask: [...]
+                    }
+                '''
+                batch.append(element)
+                if len(batch) == batch_size :
+                    yield collate_fn(batch)
+                    batch = []
+
+            else : 
+                for p in pairs :
+                    element = tokenize_element(prompt, responses[p[0]], responses[p[1]], truncation_mode, tokenizer, max_length, max_prompt_length)
+                    batch.append(element)
+                    if len(batch) == batch_size : 
+                        '''
+                            batch form : 
+                            {
+                                # list of strings
+                                'prompt': [...]
+                                'chosen': [...]
+                                'rejected': [...]
+                                'chosen_response_only': [...]
+                                'rejected_response_only': [...]
+                                # list of lists of tokens
+                                'chosen_input_ids': [[...]]
+                                'chosen_attention_mask: [[...]]
+                                'chosen_labels': [[...]]
+                                'rejected_input_ids': [[...]]
+                                'rejected_attention_mask: [[...]]
+                                'rejected_labels': [[...]]
+                                'prompt_input_ids': [[...]]
+                                'prompt_attention_mask: [[...]]
+                            }
+                        '''
+                        yield collate_fn(batch)
+        epoch_idx += 1
+                
