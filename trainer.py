@@ -22,6 +22,8 @@ class MyConfig:
     lr = 0.001
     warmup_steps = 2
     eval_every = 100
+    model_name_or_path = None
+    archive = None
 
 def get_batch_logps(logits, labels, average_log_prob=False) : 
     ''' Compute the log probabilities of the given labels under the given logits.
@@ -210,7 +212,6 @@ class Trainer():
 
         self.example_counter = 0
         self.batch_counter = 0
-        last_log = None
 
         for batch in self.train_iterator : 
             if self.example_counter % MyConfig.eval_every == 0 and (self.example_counter > 0):
